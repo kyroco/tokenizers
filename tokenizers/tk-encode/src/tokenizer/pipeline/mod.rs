@@ -762,6 +762,10 @@ impl Tokenizer {
         scratch: &mut EncodeScratch,
         output: &mut Vec<Token>,
     ) -> Result<()> {
+        let (early_normalizers, metaspace) = match self.inner.normalizers.split_last() {
+            Some((Normalizer::Metaspace(metaspace), rest)) => (rest, Some(metaspace)),
+            _ => (self.inner.normalizers.as_slice(), None),
+        };
         // First, we extract all special tokens from the non-normalized input
         for segment in SpecialSegmentIterator::new(
             input,
@@ -778,7 +782,7 @@ impl Tokenizer {
                     input_offset,
                 } => {
                     let normalized =
-                        normalize_all(&self.inner.normalizers, chunk, offset + input_offset)?;
+                        normalize_all(early_normalizers, chunk, offset + input_offset)?;
 
                     // Extract special tokens from the normalized input
                     for segment in SpecialSegmentIterator::new(
@@ -793,8 +797,16 @@ impl Tokenizer {
                             }
                             Segment::Text {
                                 text: normalized_chunk,
-                                ..
+                                input_offset: normalized_offset,
                             } => {
+                                let pre_tokenized = match metaspace {
+                                    Some(metaspace) => metaspace.normalize(
+                                        normalized_chunk,
+                                        offset + input_offset + normalized_offset,
+                                    )?,
+                                    None => std::borrow::Cow::Borrowed(normalized_chunk),
+                                };
+                                let normalized_chunk = pre_tokenized.as_ref();
                                 // Normalization can grow the text (`Metaspace` widens every space to a 3-byte delimiter),
                                 // so the length limit of `pre_tokens` applies to the normalized chunk.
                                 let EncodeScratch {
